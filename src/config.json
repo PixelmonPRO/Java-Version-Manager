@@ -1,0 +1,49 @@
+﻿{
+    "scriptVersion": "1.0.0",
+    "language": "ru-RU",
+    "javaInstallPath": "C:\\Program Files\\Java",
+    "displayLimit": 20,
+    "providers": [
+        {
+            "name": "Azul Zulu",
+            "apiType": "Azul",
+            "apiUrl": "https://api.azul.com/metadata/v1/zulu/packages",
+            "enabled": true,
+            "namePrefix": "zulu"
+        },
+        {
+            "name": "Eclipse Adoptium (Temurin)",
+            "apiType": "Adoptium",
+            "apiUrl": "https://api.adoptium.net/v3/assets/feature_releases/{java_version}/ga",
+            "enabled": true,
+            "namePrefix": "temurin"
+        },
+        {
+            "name": "Amazon Corretto",
+            "apiType": "Foojay",
+            "apiUrl": "https://api.foojay.io/disco/v3.0/packages",
+            "distributionName": "corretto",
+            "enabled": true,
+            "namePrefix": "amazon-corretto"
+        },
+        {
+            "name": "Oracle GraalVM (for JDK 17+)",
+            "apiType": "OracleDirectLink",
+            "urlTemplate": "https://download.oracle.com/graalvm/{java_version}/latest/graalvm-jdk-{java_version}_windows-x64_bin.zip",
+            "enabled": true,
+            "namePrefix": "graalvm"
+        },
+        {
+            "name": "GraalVM Community (Legacy)",
+            "apiType": "GitHubReleases",
+            "apiUrl": "https://api.github.com/repos/graalvm/graalvm-ce-builds/releases",
+            "assetFilterPatterns": [
+                "graalvm-ce-java{java_version}-windows-amd64*.zip",
+                "graalvm-community-java{java_version}-windows-amd64*.zip",
+                "graalvm-community-jdk-{java_version}_windows-x64_bin.zip"
+            ],
+            "enabled": true,
+            "namePrefix": "graalvm-ce"
+        }
+    ]
+}
