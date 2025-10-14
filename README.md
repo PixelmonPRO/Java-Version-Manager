@@ -12,7 +12,7 @@
 
 #### ✨ Ключевые возможности
 
-*   **Мульти-провайдер:** Поддержка Azul Zulu, Adoptium Temurin, Amazon Corretto, Oracle GraalVM и других.
+*   **Мульти-провайдер:** Поддержка Azul Zulu, Adoptium Temurin, Amazon Corretto, BellSoft Liberica, Oracle GraalVM и других.
 *   **Установка:** Поиск и установка нужной версии Java в несколько кликов.
 *   **Переключение:** Мгновенное переключение активной версии `JAVA_HOME` для сессии или для всей системы.
 *   **Обновление:** Автоматический поиск и установка минорных обновлений для установленных JDK.
@@ -62,7 +62,7 @@ set-java --clean-ide --force
 
 #### ✨ Key Features
 
-*   **Multi-Provider Support:** Works with Azul Zulu, Adoptium Temurin, Amazon Corretto, Oracle GraalVM, and more.
+*   **Multi-Provider Support:** Works with Azul Zulu, Adoptium Temurin, Amazon Corretto, BellSoft Liberica, Oracle GraalVM, and more.
 *   **Installation:** Find and install the required Java version in just a few clicks.
 *   **Version Switching:** Instantly switch the active `JAVA_HOME` for the current session or the entire system.
 *   **Updates:** Automatically find and install minor updates for your installed JDKs.
