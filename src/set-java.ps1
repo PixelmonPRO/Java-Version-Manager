@@ -55,6 +55,7 @@ function Initialize-Configuration {
                 @{ name = "Azul Zulu"; apiType = "Azul"; apiUrl = "https://api.azul.com/metadata/v1/zulu/packages"; enabled = $true; namePrefix = "zulu" },
                 @{ name = "Eclipse Adoptium (Temurin)"; apiType = "Adoptium"; apiUrl = "https://api.adoptium.net/v3/assets/feature_releases/{java_version}/ga"; enabled = $true; namePrefix = "temurin" },
                 @{ name = "Amazon Corretto"; apiType = "Foojay"; apiUrl = "https://api.foojay.io/disco/v3.0/packages"; distributionName = "corretto"; enabled = $true; namePrefix = "amazon-corretto" },
+                @{ name = "BellSoft Liberica"; apiType = "Foojay"; apiUrl = "https://api.foojay.io/disco/v3.0/packages"; distributionName = "liberica"; enabled = $true; namePrefix = "liberica" },
                 @{ name = "Oracle GraalVM (for JDK 17+)"; apiType = "OracleDirectLink"; urlTemplate = "https://download.oracle.com/graalvm/{java_version}/latest/graalvm-jdk-{java_version}_windows-x64_bin.zip"; enabled = $true; namePrefix = "graalvm" },
                 @{ name = "GraalVM Community (Legacy)"; apiType = "GitHubReleases"; apiUrl = "https://api.github.com/repos/graalvm/graalvm-ce-builds/releases"; assetFilterPatterns = @("graalvm-ce-java{java_version}-windows-amd64*.zip", "graalvm-community-java{java_version}-windows-amd64*.zip", "graalvm-community-jdk-{java_version}_windows-x64_bin.zip"); enabled = $true; namePrefix = "graalvm-ce" }
             )
@@ -142,8 +143,10 @@ Write-Host "Update complete! Please restart your terminal." -ForegroundColor Gre
 
 # --- API Адаптеры и Диспетчер ---
 function Find-RemotePackages {
-    param( [psobject]$Provider, [string]$PackageType, [switch]$IncludeFx, [string]$JavaVersion )
-    Write-Host "`n$($L.ApiQuery -f $Provider.name)" -ForegroundColor Cyan
+    param( [psobject]$Provider, [string]$PackageType, [switch]$IncludeFx, [string]$JavaVersion, [switch]$Silent )
+    if (-not $Silent) {
+        Write-Host "`n$($L.ApiQuery -f $Provider.name)" -ForegroundColor Cyan
+    }
     switch ($Provider.apiType) {
         "Azul"             { return Get-RemotePackagesFromAzul -Provider $Provider -PackageType $PackageType -IncludeFx $IncludeFx -JavaVersion $JavaVersion }
         "Adoptium"         { if ($IncludeFx) { Write-Warning ($L.FxNotSupportedWarning -f $Provider.name) }; return Get-RemotePackagesFromAdoptium -Provider $Provider -PackageType $PackageType -JavaVersion $JavaVersion }
@@ -202,7 +205,7 @@ function Get-RemotePackagesFromGitHubReleases {
 
         if ($zipAsset) {
             $shaAsset = $release.assets | Where-Object { $_.name -eq "$($zipAsset.name).sha256" }
-            $sha256Hash = if ($shaAsset) { 
+            $ShaHash = if ($shaAsset) { 
                 try { (Invoke-WebRequest -Uri $shaAsset.browser_download_url -UseBasicParsing).Content.Trim().Split(' ')[0] } catch { "" }
             } else { "" }
 
@@ -210,13 +213,14 @@ function Get-RemotePackagesFromGitHubReleases {
             $displayVersion = if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { $release.tag_name }
 
             $unifiedPackages.Add([PSCustomObject]@{
-                ProviderName   = $Provider.name
-                PackageName    = $zipAsset.name -replace '\.zip$'
-                DisplayVersion = $displayVersion
-                DownloadUrl    = $zipAsset.browser_download_url
-                Sha256Hash     = $sha256Hash
-                SupportsFx     = $false
-                OriginalPackage= $release
+                ProviderName    = $Provider.name
+                PackageName     = $zipAsset.name -replace '\.zip$'
+                DisplayVersion  = $displayVersion
+                DownloadUrl     = $zipAsset.browser_download_url
+                ShaHash         = $ShaHash
+                ChecksumType    = 'sha256'
+                SupportsFx      = $false
+                OriginalPackage = $release
             })
         }
     }
@@ -231,7 +235,7 @@ function Get-RemotePackagesFromOracleDirectLink {
     $downloadUrl = $Provider.urlTemplate -replace "{java_version}", $JavaVersion
     $checksumUrl = $downloadUrl + ".sha256"
 
-    $sha256Hash = try {
+    $ShaHash = try {
         (Invoke-WebRequest -Uri $checksumUrl -UseBasicParsing -ErrorAction Stop).Content.Trim()
     } catch {
         return @()
@@ -248,7 +252,8 @@ function Get-RemotePackagesFromOracleDirectLink {
         PackageName     = $packageName
         DisplayVersion  = $displayVersion
         DownloadUrl     = $downloadUrl
-        Sha256Hash      = $sha256Hash
+        ShaHash         = $ShaHash
+        ChecksumType    = 'sha256'
         SupportsFx      = $false
         OriginalPackage = $null
     }
@@ -258,10 +263,10 @@ function Get-RemotePackagesFromOracleDirectLink {
 
 function Get-RemotePackagesFromAzul {
     param($Provider, $PackageType, $IncludeFx, $JavaVersion)
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'x86_64' } else { 'x86' }
-    $apiUrl = "$($Provider.apiUrl)?os=windows&amp;arch=$($arch)&amp;archive_type=zip&amp;java_package_type=$($PackageType)&amp;release_status=ga&amp;javafx_bundled=$($IncludeFx.IsPresent.ToString().ToLower())"
-    if (-not [string]::IsNullOrWhiteSpace($JavaVersion)) { $apiUrl += "&amp;java_version=$($JavaVersion)" }
+    $apiUrl = "$($Provider.apiUrl)?os=windows&arch=$($arch)&archive_type=zip&java_package_type=$($PackageType)&release_status=ga&javafx_bundled=$($IncludeFx.IsPresent.ToString().ToLower())"
+    if (-not [string]::IsNullOrWhiteSpace($JavaVersion)) { $apiUrl += "&java_version=$($JavaVersion)" }
     $headers = @{ "User-Agent" = "PowerShell-Java-Manager-Script" }
     
     $apiResult = try { 
@@ -280,7 +285,8 @@ function Get-RemotePackagesFromAzul {
             PackageName     = $_.name -replace '\.zip$'
             DisplayVersion  = ($_.java_version -join '.')
             DownloadUrl     = $_.download_url
-            Sha256Hash      = $_.sha256_hash
+            ShaHash         = $_.sha256_hash
+            ChecksumType    = 'sha256'
             SupportsFx      = $_.javafx_bundled
             OriginalPackage = $_ 
         }
@@ -290,15 +296,15 @@ function Get-RemotePackagesFromAzul {
 function Get-RemotePackagesFromAdoptium {
     param($Provider, $PackageType, $JavaVersion)
     if ([string]::IsNullOrWhiteSpace($JavaVersion)) { throw ($L.ApiRequiresVersion -f $Provider.name) }
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'x64' } else { 'x86' }
-    $apiUrl = ($Provider.apiUrl -replace "{java_version}", $JavaVersion) + "?os=windows&amp;architecture=$($arch)&amp;image_type=$($PackageType)&amp;jvm_impl=hotspot&amp;release_type=ga"
+    $apiUrl = ($Provider.apiUrl -replace "{java_version}", $JavaVersion) + "?os=windows&architecture=$($arch)&image_type=$($PackageType)&jvm_impl=hotspot&release_type=ga"
     $headers = @{ "User-Agent" = "PowerShell-Java-Manager-Script" }
     $apiResult = try { @(Invoke-RestMethod -Uri $apiUrl -Headers $headers -UseBasicParsing) } catch { @() }
     $unifiedPackages = [System.Collections.Generic.List[object]]::new()
     foreach ($release in $apiResult) {
         $binary = $release.binaries | Where-Object { $_.os -eq 'windows' -and $_.architecture -eq $arch -and $_.image_type -eq $PackageType } | Select-Object -First 1
-        if ($binary) { $unifiedPackages.Add([PSCustomObject]@{ ProviderName = $Provider.name; PackageName = $binary.package.name -replace '\.zip$'; DisplayVersion = $release.version_data.semver; DownloadUrl = $binary.package.link; Sha256Hash = $binary.package.checksum; SupportsFx = $false; OriginalPackage = $release }) }
+        if ($binary) { $unifiedPackages.Add([PSCustomObject]@{ ProviderName = $Provider.name; PackageName = $binary.package.name -replace '\.zip$'; DisplayVersion = $release.version_data.semver; DownloadUrl = $binary.package.link; ShaHash = $binary.package.checksum; ChecksumType = 'sha256'; SupportsFx = $false; OriginalPackage = $release }) }
     }
     return $unifiedPackages
 }
@@ -309,21 +315,83 @@ function Get-RemotePackagesFromFoojay {
     if ([string]::IsNullOrWhiteSpace($Provider.distributionName)) {
         throw "Provider '$($Provider.name)' is configured to use the 'Foojay' API type but is missing the 'distributionName' property in config.json."
     }
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'x64' } else { 'x86' }
     
     $distributionName = [uri]::EscapeDataString($Provider.distributionName)
-    $apiUrl = "$($Provider.apiUrl)?distro=$($distributionName)&amp;version=$($JavaVersion)&amp;os=windows&amp;architecture=$($arch)&amp;archive_type=zip&amp;package_type=$($PackageType)"
+    $apiUrl = "$($Provider.apiUrl)?distro=$($distributionName)&version=$($JavaVersion)&release_status=ga&latest=available&os=windows&architecture=$arch&archive_type=zip&package_type=$($PackageType)"
     
     $headers = @{ "User-Agent" = "PowerShell-Java-Manager-Script" }
     $apiResult = try { Invoke-RestMethod -Uri $apiUrl -Headers $headers -UseBasicParsing } catch { return @() }
     $unifiedPackages = [System.Collections.Generic.List[object]]::new()
     foreach ($package in $apiResult.result) {
-        if ($package.distribution -ne $Provider.distributionName) { continue }
+        if ($package.distribution -ne $Provider.distributionName -or $package.operating_system -ne 'windows') { continue }
         
         $detailsResult = try { Invoke-RestMethod -Uri $package.links.pkg_info_uri -Headers $headers -UseBasicParsing } catch { continue }
         $packageDetails = $detailsResult.result[0]
-        $unifiedPackages.Add([PSCustomObject]@{ ProviderName = $Provider.name; PackageName = $packageDetails.filename -replace '\.zip$'; DisplayVersion = $package.java_version; DownloadUrl = $packageDetails.direct_download_uri; Sha256Hash = $packageDetails.checksum; SupportsFx = $false; OriginalPackage = $package })
+        
+        $shaHash = ""
+        $checksumType = ""
+        if ($packageDetails.checksum_type -eq 'sha256') {
+            $shaHash = $packageDetails.checksum
+            $checksumType = 'sha256'
+        }
+
+        # --- FIX START: Improved checksum fetching for BellSoft Liberica with logging ---
+        if ([string]::IsNullOrWhiteSpace($shaHash) -and $Provider.name -eq 'BellSoft Liberica') {
+            $parentUri = $packageDetails.direct_download_uri.Substring(0, $packageDetails.direct_download_uri.LastIndexOf('/'))
+            
+            $checksumFiles = @(
+                @{ Url = "$parentUri/sha256sum.txt"; Algo = "sha256"; HashLength = 64 },
+                @{ Url = "$parentUri/sha1sum.txt"; Algo = "sha1"; HashLength = 40 }
+            )
+
+            foreach ($fileInfo in $checksumFiles) {
+                Write-Host "[DEBUG] Attempting to find checksum in $($fileInfo.Url)" -ForegroundColor DarkGray
+                try {
+                    $checksumsContent = (Invoke-WebRequest -Uri $fileInfo.Url -UseBasicParsing -ErrorAction Stop -Headers @{ "User-Agent" = "PowerShell-Java-Manager-Script" } -MaximumRedirection 5).Content
+                    Write-Host "[DEBUG] Successfully downloaded checksum file. Content snippet:" -ForegroundColor DarkGray
+                    Write-Host ($checksumsContent.Split("`n") | Select-Object -First 5 | Out-String) -ForegroundColor DarkGray
+
+                    $escapedFilename = [regex]::Escape($packageDetails.filename)
+                    $pattern = "^\s*([a-fA-F0-9]{$($fileInfo.HashLength)})\s+\*?$($escapedFilename)\s*$"
+                    Write-Host "[DEBUG] Using regex pattern: $pattern" -ForegroundColor DarkGray
+                    
+                    $lines = $checksumsContent -split '(\r?\n)' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                    foreach ($line in $lines) {
+                        $trimmedLine = $line.Trim()
+                        Write-Host "[DEBUG] Checking line: '$trimmedLine'" -ForegroundColor DarkGray
+                        if ($trimmedLine -match $pattern) {
+                            $shaHash = $matches[1].ToLower()
+                            $checksumType = $fileInfo.Algo
+                            Write-Host "[DEBUG] SUCCESS: Found hash '$shaHash' for '$($packageDetails.filename)'" -ForegroundColor Green
+                            break 
+                        }
+                    }
+                } catch {
+                    Write-Host "[DEBUG] FAILED to download or process $($fileInfo.Url). Error: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+                
+                if (-not [string]::IsNullOrWhiteSpace($shaHash)) {
+                    Write-Host "[DEBUG] Found hash, breaking from checksum file loop." -ForegroundColor DarkGray
+                    break
+                } else {
+                    Write-Host "[DEBUG] No hash found in $($fileInfo.Url), trying next file if available." -ForegroundColor DarkGray
+                }
+            }
+        }
+        # --- FIX END ---
+
+        $unifiedPackages.Add([PSCustomObject]@{ 
+            ProviderName    = $Provider.name
+            PackageName     = $packageDetails.filename -replace '\.zip$'
+            DisplayVersion  = $package.java_version
+            DownloadUrl     = $packageDetails.direct_download_uri
+            ShaHash         = $shaHash
+            ChecksumType    = $checksumType
+            SupportsFx      = $false
+            OriginalPackage = $package 
+        })
     }
     return $unifiedPackages
 }
@@ -371,13 +439,16 @@ function Read-ValidatedChoice {
     )
     $promptWithOptions = $Prompt
     if ($ValidOptions -contains 'y' -and $ValidOptions -contains 'n') {
-        $promptWithOptions += " [y/N]:"
-        if ($DefaultOption -eq 'y') { $promptWithOptions = $Prompt + " [Y/n]:" }
+        $promptWithOptions = if ($DefaultOption -eq 'y') { "$Prompt [Y/n]" } else { "$Prompt [y/N]" }
     }
 
     while ($true) {
-        $input = Read-Host -Prompt $promptWithOptions
+        $finalPrompt = $promptWithOptions.TrimEnd(':').Trim() + ": "
+        Write-Host -NoNewline $finalPrompt
+        $input = Read-Host
+        
         if ([string]::IsNullOrWhiteSpace($input) -and -not [string]::IsNullOrWhiteSpace($DefaultOption)) {
+            Write-Host $DefaultOption
             return $DefaultOption
         }
         if ($ValidOptions -contains $input.ToLower()) {
@@ -388,12 +459,16 @@ function Read-ValidatedChoice {
 }
 
 function Download-And-Extract-Package {
-    param( [Parameter(Mandatory=$true)] [psobject]$UnifiedPackage )
+    param(
+        [Parameter(Mandatory=$true)] [psobject]$UnifiedPackage,
+        [Parameter(Mandatory=$true)] [string]$PackageType
+    )
     
     $zipFileName = "$($UnifiedPackage.PackageName).zip"
     $zipFilePath = Join-Path $env:TEMP $zipFileName
     $extractPath = Join-Path $javaInstallPath $UnifiedPackage.PackageName
-    $expectedChecksum = $UnifiedPackage.Sha256Hash
+    $expectedChecksum = $UnifiedPackage.ShaHash
+    $checksumAlgo = $UnifiedPackage.ChecksumType
     
     if (Test-Path $extractPath) { throw ($L.JdkAlreadyInstalled -f $UnifiedPackage.PackageName) }
     if ([string]::IsNullOrWhiteSpace($expectedChecksum)) { Write-Warning "Checksum is missing for package '$($UnifiedPackage.PackageName)'. Proceeding without verification." }
@@ -413,12 +488,12 @@ function Download-And-Extract-Package {
     }
     
     if (-not [string]::IsNullOrWhiteSpace($expectedChecksum)) {
-        Write-Host "`n$($L.VerifyingChecksum)" -ForegroundColor Cyan
+        Write-Host "`n$($L.VerifyingChecksum.Replace('SHA256', $checksumAlgo.ToUpper()))" -ForegroundColor Cyan
         $calculatedHash = $null
         $retryCount = 5
         $retryDelay = 1 
         for ($i = 1; $i -le $retryCount; $i++) {
-            $fileHashObject = Get-FileHash -Path $zipFilePath -Algorithm SHA256 -ErrorAction SilentlyContinue
+            $fileHashObject = Get-FileHash -Path $zipFilePath -Algorithm $checksumAlgo -ErrorAction SilentlyContinue
             if ($fileHashObject -and -not [string]::IsNullOrWhiteSpace($fileHashObject.Hash)) {
                 $calculatedHash = $fileHashObject.Hash.ToLower()
                 break
@@ -443,6 +518,24 @@ function Download-And-Extract-Package {
     Write-Host ("`n" + ($L.Extracting -f $javaInstallPath)) -ForegroundColor Cyan
     Expand-Archive -Path $zipFilePath -DestinationPath $javaInstallPath -Force
     Remove-Item $zipFilePath
+
+    # --- НОВОЕ: Создание файла метаданных ---
+    try {
+        $metaData = @{
+            providerName = $UnifiedPackage.ProviderName
+            fullVersion  = $UnifiedPackage.DisplayVersion
+            majorVersion = ([regex]::Match($UnifiedPackage.DisplayVersion, '^\d+')).Value
+            packageType  = $PackageType
+            hasFx        = $UnifiedPackage.SupportsFx
+            installDate  = (Get-Date -Format 'o')
+        }
+        $metaFilePath = Join-Path $extractPath ".jvm_meta.json"
+        $metaData | ConvertTo-Json | Out-File -FilePath $metaFilePath -Encoding utf8
+    } catch {
+        Write-Warning "Could not create metadata file for $($UnifiedPackage.PackageName). Update checks for this JDK may fail."
+    }
+    # --- КОНЕЦ НОВОГО БЛОКА ---
+
     Write-Host "`n$($L.InstallComplete -f $UnifiedPackage.PackageName)" -ForegroundColor Green
     return $extractPath
 }
@@ -517,8 +610,13 @@ function Select-Provider {
     Write-Host "`n$($L.SelectProviderTitle)" -ForegroundColor Yellow
     for ($i = 0; $i -lt $enabledProviders.Count; $i++) { Write-Host ("{0}. {1}" -f ($i + 1), $enabledProviders[$i].name) }
     
-    $choice = Read-Host "`n$($L.SelectProviderPrompt)"
-    $selectedIndex = try { [int]$choice - 1 } catch { -1 }
+    $choice = ""
+    $prompt = "`n$($L.SelectProviderPrompt)"
+    # Use Read-ValidatedChoice to handle the prompt cleanly
+    $validIndices = 1..($enabledProviders.Count) | ForEach-Object { "$_" }
+    $choice = Read-ValidatedChoice -Prompt $prompt -ValidOptions $validIndices
+    
+    $selectedIndex = [int]$choice - 1
 
     if ($selectedIndex -ge 0 -and $selectedIndex -lt $enabledProviders.Count) { return $enabledProviders[$selectedIndex] } 
     else { throw $L.InvalidSelection }
@@ -547,7 +645,9 @@ function Invoke-InstallMenu {
         $includeFx = ($fxInput -eq 'y')
     }
     
-    Write-Host $L.EnterMajorVersion; $javaVersion = Read-Host
+    # --- FIX: Prevent double colons in Read-Host prompt ---
+    $promptText = $L.EnterMajorVersion.TrimEnd(':')
+    $javaVersion = Read-Host -Prompt "$promptText:"
     
     if ([string]::IsNullOrWhiteSpace($javaVersion) -and ($provider.apiType -match '^(OracleDirectLink|Adoptium|Foojay|GitHubReleases)$')) {
         throw ($L.ApiRequiresVersion -f $Provider.name)
@@ -567,18 +667,25 @@ function Invoke-InstallMenu {
     
     $i = 1
     $displayItems = @()
+    $validChoices = [System.Collections.Generic.List[string]]::new()
+
     foreach ($package in $remotePackages) {
         $isInstalled = $package.PackageName -in $installedNames
+        $checksumIndicator = if ([string]::IsNullOrWhiteSpace($package.ShaHash)) { [char]0x274C } else { [char]0x2713 } # ❌ or ✔
+        $displayPackageName = "$($package.PackageName) [checksum: $checksumIndicator]"
+        
+        $itemIndex = if ($isInstalled) { '-' } else { "$i" }
+        if(-not $isInstalled) { $validChoices.Add("$i"); $i++ }
+
         $displayItems += [PSCustomObject]@{
-            Index       = if ($isInstalled) { '-' } else { $i }
-            PackageName = $package.PackageName
+            Index       = $itemIndex
+            PackageName = $displayPackageName
             IsInstalled = $isInstalled
             Package     = $package
         }
-        if (-not $isInstalled) { $i++ }
     }
     
-    if (($displayItems | Where-Object { -not $_.IsInstalled }).Count -eq 0) { Write-Host ($L.AllBuildsInstalled -f $javaVersion) -ForegroundColor Green; return }
+    if ($validChoices.Count -eq 0) { Write-Host ($L.AllBuildsInstalled -f $javaVersion) -ForegroundColor Green; return }
     
     $displayItems | ForEach-Object {
         $line = "{0,-4} {1}" -f $_.Index, $_.PackageName
@@ -591,14 +698,14 @@ function Invoke-InstallMenu {
     
     if ($ListOnly) { return }
 
-    Write-Host "`n$($L.EnterBuildToInstall)"; $input = Read-Host
+    $input = Read-ValidatedChoice -Prompt "`n$($L.EnterBuildToInstall)" -ValidOptions $validChoices
     if ([string]::IsNullOrWhiteSpace($input)) { Write-Host "`n$($L.InstallationCancelled)"; return }
     
     $selectionNumber = try { [int]$input } catch { -1 }
     $packageToInstall = ($displayItems | Where-Object { $_.Index -eq $selectionNumber -and -not $_.IsInstalled }).Package
     
     if (-not $packageToInstall) { throw $L.InvalidSelection }
-    Download-And-Extract-Package -UnifiedPackage $packageToInstall | Out-Null
+    Download-And-Extract-Package -UnifiedPackage $packageToInstall -PackageType $currentPkgType | Out-Null
 }
 
 function Invoke-SwitchMenu {
@@ -607,7 +714,9 @@ function Invoke-SwitchMenu {
     $installedJdks = @(Get-InstalledJdks)
     if ($installedJdks.Count -eq 0) { throw ($L.NoJdksInstalled -f $javaInstallPath) }
     $installedJdks | Format-Table -AutoSize -Property Index, Name
-    Write-Host "`n$($L.EnterJdkToActivate)"; $input = Read-Host
+    
+    $validChoices = 1..($installedJdks.Count) | ForEach-Object { "$_" }
+    $input = Read-ValidatedChoice -Prompt "`n$($L.EnterJdkToActivate)" -ValidOptions $validChoices
     if ([string]::IsNullOrWhiteSpace($input)) { return }
 
     $selectionNumber = try { [int]$input } catch { -1 }
@@ -625,7 +734,9 @@ function Invoke-UninstallMenu {
     $installedJdks = @(Get-InstalledJdks)
     if ($installedJdks.Count -eq 0) { throw $L.NoJdksToUninstall }
     $installedJdks | Format-Table -AutoSize -Property Index, Name
-    Write-Host "`n$($L.EnterJdkToUninstall)"; $input = Read-Host
+    
+    $validChoices = 1..($installedJdks.Count) | ForEach-Object { "$_" }
+    $input = Read-ValidatedChoice -Prompt "`n$($L.EnterJdkToUninstall)" -ValidOptions $validChoices
     if ([string]::IsNullOrWhiteSpace($input)) { Write-Host "`n$($L.UninstallationCancelled)"; return }
     
     $selectionNumber = try { [int]$input } catch { -1 }
@@ -703,7 +814,9 @@ function Invoke-UpdateMenu {
         Write-Host ("{0}. {1} -> {2}" -f $_.Index, $_.InstalledJdk.Name, $_.NewPackageName)
     }
 
-    Write-Host "`n$($L.EnterUpdateSelection)"; $input = Read-Host
+    $validChoices = 1..($updates.Count) | ForEach-Object { "$_" }
+    $validChoices += 'a'
+    $input = Read-ValidatedChoice -Prompt "`n$($L.EnterUpdateSelection)" -ValidOptions $validChoices
     if ([string]::IsNullOrWhiteSpace($input)) { Write-Host "`n$($L.UpdateCancelled)"; return }
     
     $selections = if ($input -eq 'a') { $updates } else { $indices = $input -split ',' | ForEach-Object { $_.Trim() }; $updates | Where-Object { $_.Index -in $indices } }
@@ -722,25 +835,47 @@ function Find-AvailableUpdates {
     $updates = [System.Collections.Generic.List[object]]::new()
 
     foreach ($jdk in $installedJdks) {
-        $provider = $config.providers | Where-Object { $jdk.Name -like "$($_.namePrefix)*" } | Select-Object -First 1
-        if (-not $provider) { continue } 
+        Write-Host ($L.CheckingForUpdateFor -f $jdk.Name) -ForegroundColor DarkGray
+        
+        $metaPath = Join-Path $jdk.Path ".jvm_meta.json"
+        $provider = $null
+        $majorVersion = $null
+        $packageType = 'jdk'
+        $hasFx = $false
+        $installedVersion = $null
 
-        $versionMatch = [regex]::Match($jdk.Name, '(\d+(\.\d+)+)')
-        if (-not $versionMatch.Success) { continue }
-        $installedVersion = ConvertTo-SortableVersion -VersionString $versionMatch.Groups[1].Value
-        $majorVersion = $installedVersion.Major
+        if (Test-Path $metaPath) {
+            # НОВАЯ ЛОГИКА: Читаем метаданные
+            $meta = Get-Content -Path $metaPath -Raw | ConvertFrom-Json
+            $provider = $config.providers | Where-Object { $_.name -eq $meta.providerName }
+            $majorVersion = $meta.majorVersion
+            $packageType = $meta.packageType
+            $hasFx = $meta.hasFx
+            $installedVersion = ConvertTo-SortableVersion -VersionString $meta.fullVersion
+        } else {
+            # СТАРАЯ ЛОГИКА (для обратной совместимости): Угадываем по имени папки
+            $provider = $config.providers | Where-Object { $jdk.Name -like "$($_.namePrefix)*" } | Select-Object -First 1
+            if (-not $provider) { continue }
 
-        $isJre = $jdk.Name -like '*jre*'
-        $packageType = if ($isJre) { 'jre' } else { 'jdk' }
-        $hasFx = $jdk.Name -like '*-fx*'
+            $versionMatch = [regex]::Match($jdk.Name, '(\d+(\.\d+)+)')
+            if (-not $versionMatch.Success) { continue }
+            $installedVersion = ConvertTo-SortableVersion -VersionString $versionMatch.Groups[1].Value
+            $majorVersion = $installedVersion.Major
+            $packageType = if ($jdk.Name -like '*jre*') { 'jre' } else { 'jdk' }
+            $hasFx = $jdk.Name -like '*-fx*'
+        }
 
-        $remotePackages = Find-RemotePackages -Provider $provider -PackageType $packageType -IncludeFx:$hasFx -JavaVersion $majorVersion
+        if (-not $provider) { continue }
+
+        $remotePackages = Find-RemotePackages -Provider $provider -PackageType $packageType -IncludeFx:$hasFx -JavaVersion $majorVersion -Silent
         if ($remotePackages.Count -eq 0) { continue }
 
         $latestPackage = $remotePackages | Sort-Object -Property @{Expression={ConvertTo-SortableVersion -VersionString $_.DisplayVersion}} -Descending | Select-Object -First 1
+        if ($null -eq $latestPackage) { continue }
+
         $latestVersion = ConvertTo-SortableVersion -VersionString $latestPackage.DisplayVersion
         
-        if ($latestVersion -gt $installedVersion) {
+        if (($latestVersion.Major -eq $majorVersion) -and ($latestVersion -gt $installedVersion)) {
             $updates.Add([PSCustomObject]@{
                 Index          = $updates.Count + 1
                 InstalledJdk   = $jdk
@@ -758,7 +893,18 @@ function Perform-Update {
     $systemJavaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME", "Machine")
     $wasSystemHome = ($systemJavaHome -eq $OldJdk.Path)
 
-    $newJdkPath = Download-And-Extract-Package -UnifiedPackage $NewPackageInfo
+    # Определяем тип пакета для нового JDK/JRE на основе старого
+    $oldMetaPath = Join-Path $OldJdk.Path ".jvm_meta.json"
+    $pkgTypeForNew = 'jdk' # По умолчанию
+    if (Test-Path $oldMetaPath) {
+        $oldMeta = Get-Content $oldMetaPath -Raw | ConvertFrom-Json
+        $pkgTypeForNew = $oldMeta.packageType
+    } else {
+        # Легаси-проверка для старых установок
+        if ($OldJdk.Name -like '*jre*') { $pkgTypeForNew = 'jre' }
+    }
+
+    $newJdkPath = Download-And-Extract-Package -UnifiedPackage $NewPackageInfo -PackageType $pkgTypeForNew
     if (-not $newJdkPath) { Write-Error "Failed to install new package, aborting update."; return }
 
     Uninstall-SingleJdk -JdkName $OldJdk.Name -Silent
@@ -804,6 +950,7 @@ function Get-JavaVersionFromPath {
         return "Error getting version"
     }
 }
+
 function Find-IntelliJConfigs {
     $configs = [System.Collections.Generic.List[string]]::new()
     $basePath = Join-Path $env:APPDATA "JetBrains"
@@ -868,7 +1015,6 @@ function Get-JdkStructure {
 
     return @{ ClassPath = ($classPaths | Sort-Object); SourcePath = ($sourcePaths | Sort-Object) }
 }
-
 
 function Invoke-IdeCleanup {
     param([switch]$Force)
@@ -1059,7 +1205,7 @@ function Invoke-NonInteractiveInstall {
     
     Write-Host ("`n" + ($L.NonInteractiveLatest -f $remotePackages.Count, $latestPackage.PackageName)) -ForegroundColor Cyan
     
-    $installedPath = Download-And-Extract-Package -UnifiedPackage $latestPackage
+    $installedPath = Download-And-Extract-Package -UnifiedPackage $latestPackage -PackageType $PackageType
     if ($Permanent) {
         Set-JavaEnvironment -JavaPath $installedPath -IsPermanent
     }
@@ -1114,8 +1260,10 @@ function Invoke-InteractiveMode {
         $currentJavaHome = if ($env:JAVA_HOME) { $env:JAVA_HOME } else { "not set" }
         Write-Host ($L.CurrentJavaHome -f $currentJavaHome) -ForegroundColor Cyan; Write-Host ""
         Write-Host $L.MenuSwitch; Write-Host $L.MenuList; Write-Host $L.MenuInstall
-        Write-Host $L.MenuUninstall; Write-Host $L.MenuUpdate; Write-Host $L.MenuCleanIde; Write-Host $L.MenuQuit; Write-Host
-        Write-Host $L.SelectOption; $choice = Read-Host
+        Write-Host $L.MenuUninstall; Write-Host $L.MenuUpdate; Write-Host $L.MenuCleanIde; Write-Host $L.MenuQuit; Write-Host ""
+        
+        $choice = Read-ValidatedChoice -Prompt $L.SelectOption -ValidOptions '1', '2', '3', '4', '5', '6', 'q'
+
         try {
             switch ($choice) {
                 '1' { Invoke-SwitchMenu }
