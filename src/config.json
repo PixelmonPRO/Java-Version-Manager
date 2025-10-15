@@ -27,6 +27,14 @@
             "namePrefix": "amazon-corretto"
         },
         {
+            "name": "BellSoft Liberica",
+            "apiType": "Foojay",
+            "apiUrl": "https://api.foojay.io/disco/v3.0/packages",
+            "distributionName": "liberica",
+            "enabled": true,
+            "namePrefix": "liberica"
+        },
+        {
             "name": "Oracle GraalVM (for JDK 17+)",
             "apiType": "OracleDirectLink",
             "urlTemplate": "https://download.oracle.com/graalvm/{java_version}/latest/graalvm-jdk-{java_version}_windows-x64_bin.zip",
