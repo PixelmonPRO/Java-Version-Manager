@@ -18,11 +18,8 @@
   .\set-java.ps1 --clean-ide --force
 #>
 
-# Принудительная установка кодировки консоли на UTF-8 для корректной работы с кириллицей
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
-
 # --- Параметры командной строки ---
+# [ВАЖНО] param() должен быть первым исполняемым блоком в скрипте.
 param(
     [string]$List,
     [string]$Install,
@@ -37,6 +34,10 @@ param(
     [ValidateSet('jdk', 'jre')]
     [string]$PackageType = 'jdk'
 )
+
+# [FIX] Настройка кодировки перенесена ПОСЛЕ блока param, чтобы не ломать парсинг аргументов
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 
 # --- Глобальные переменные ---
 $scriptDir = $PSScriptRoot
@@ -68,9 +69,12 @@ function Initialize-Configuration {
             $defaultConfig | ConvertTo-Json -Depth 10 | Out-File -FilePath $configPath -Encoding utf8 -ErrorAction Stop
         } catch { throw "Failed to create config.json at '$configPath'. Check permissions." }
     }
+    
     try {
-        $script:config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-    } catch { throw "Failed to read or parse config.json. Please ensure it is a valid JSON file." }
+        # [FIX] Используем .NET для чтения файла, чтобы избежать проблем с кодировкой в старых версиях PowerShell
+        $configContent = [System.IO.File]::ReadAllText($configPath, [System.Text.Encoding]::UTF8)
+        $script:config = $configContent | ConvertFrom-Json -ErrorAction Stop
+    } catch { throw "Failed to read or parse config.json. Please ensure it is a valid JSON file. Error: $($_.Exception.Message)" }
 
     $script:javaInstallPath = [System.Environment]::ExpandEnvironmentVariables($config.javaInstallPath)
 
@@ -84,8 +88,10 @@ function Initialize-Configuration {
     }
     
     try {
-        $script:L = Get-Content -LiteralPath $langFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
-    } catch { throw "Failed to parse language file '$langFilePath'." }
+        # [FIX] Используем .NET для чтения файла локализации (особенно важно для кириллицы ru-RU.json)
+        $langContent = [System.IO.File]::ReadAllText($langFilePath, [System.Text.Encoding]::UTF8)
+        $script:L = $langContent | ConvertFrom-Json
+    } catch { throw "Failed to parse language file '$langFilePath'. Error: $($_.Exception.Message)" }
 }
 
 # --- Функция самообновления ---
