@@ -1,4 +1,4 @@
-![Java Version Manager Logo](docs/images/logo.gif)
+![Java Version Manager Logo](docs/images/banner.gif)
 
 # Java Version Manager [set-java]
 
