@@ -2,12 +2,17 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================================
-:: Установщик Java Version Manager (Fixed for Cyrillic Paths)
+:: Установщик Java Version Manager (Fixed for Cyrillic Paths & Batch Parsing)
 :: ============================================================================
 
-:: --- Шаг 1: Настройка и очистка лога ---
-chcp 65001 > nul
+:: --- Шаг 1: Настройка кодировки и лога ---
+:: Сразу ставим UTF-8. Важно для корректного отображения кириллицы.
+chcp 65001 >nul
+
+:: Определяем путь к логу. Используем кавычки.
 set "LOG_FILE=%~dp0setup_log.txt"
+
+:: Логируем начало работы
 (
     echo Starting log at %TIME% on %DATE%
     echo. & echo === SCRIPT STARTED ===
@@ -30,9 +35,8 @@ if errorlevel 1 (
 
 :: --- Шаг 4: Проверка наличия файлов и восстановление ---
 set "SRC_DIR=%~dp0src\"
-if exist "%SRC_DIR%set-java.ps1" (
-    goto :install_main
-)
+:: Используем if exist с кавычками. Если папка src не найдена, пробуем восстановить.
+if exist "%SRC_DIR%set-java.ps1" goto :install_main
 
 call :recover_files
 if errorlevel 1 (
@@ -44,13 +48,15 @@ if errorlevel 1 (
 :install_main
 set "java_install_path="
 
-:: [FIX] Передаем путь через переменную окружения, чтобы избежать проблем с кириллицей в аргументах
+:: Передаем путь через переменную окружения (безопасно для кириллицы)
 set "PS_CONFIG_PATH=!SRC_DIR!config.json"
 
+:: Читаем конфиг через PowerShell
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; (Get-Content -LiteralPath $env:PS_CONFIG_PATH -Raw -Encoding UTF8 | ConvertFrom-Json).javaInstallPath" 2^>nul`) do (
   set "java_install_path=%%i"
 )
 
+:: Дефолтный путь, если конфиг не прочитан
 if not defined java_install_path set "java_install_path=%ProgramFiles%\Java"
 set "scripts_target_dir=%java_install_path%\scripts"
 
@@ -58,20 +64,23 @@ call :log_and_echo "!INFO_INSTALL_TO! -> !scripts_target_dir!"
 if not exist "!scripts_target_dir!" ( mkdir "!scripts_target_dir!" & call :log_and_echo "!INFO_DIR_CREATED!" )
 
 call :log_and_echo "!INFO_COPYING!"
-:: Использование xcopy с кавычками обычно безопасно для кириллицы
+:: Копирование файлов
 xcopy "!SRC_DIR!*" "!scripts_target_dir!\" /E /I /Y /Q >nul
 
 call :log_and_echo "!INFO_ALIASES!"
+:: Создание батника-обертки
 (
   echo @echo off
   echo chcp 65001 ^>nul
   echo powershell -NoProfile -ExecutionPolicy Bypass -File "%scripts_target_dir%\set-java.ps1" %%*
 ) > "!scripts_target_dir!\set-java.bat"
+
 copy /y "!scripts_target_dir!\set-java.bat" "!scripts_target_dir!\javas.bat" >nul
 copy /y "!scripts_target_dir!\set-java.bat" "!scripts_target_dir!\jav.bat" >nul
 
 call :log_and_echo "!INFO_PATH!"
-:: [FIX] Передача целевого пути через переменную окружения
+
+:: Обновление PATH через PowerShell
 set "PS_TARGET_DIR=!scripts_target_dir!"
 powershell -NoProfile -Command ^
  "$t=$env:PS_TARGET_DIR; $regKey='HKLM:\System\CurrentControlSet\Control\Session Manager\Environment'; $p=(Get-ItemProperty -Path $regKey).Path; if($p -notlike '*'+$t+'*'){Set-ItemProperty -Path $regKey -Name Path -Value ($p+';'+$t); Write-Host 'Path updated.'} else{Write-Host '!INFO_PATH_EXISTS!'}" >> "!LOG_FILE!"
@@ -79,7 +88,7 @@ powershell -NoProfile -Command ^
 echo. & call :log_and_echo "!INFO_SUCCESS!" & call :log_and_echo "!INFO_RESTART!" & echo.
 pause
 
-:: --- Шаг 6: Открытие нового терминала с запущенным set-java ---
+:: --- Шаг 6: Открытие нового терминала ---
 where wt.exe >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
     start wt.exe powershell.exe -NoExit -Command "& '!scripts_target_dir!\set-java.bat'"
@@ -101,47 +110,52 @@ goto :eof
 :localize
 set "SYS_LANG=en"
 for /f "tokens=3" %%a in ('reg query "HKCU\Control Panel\International" /v LocaleName 2^>nul') do ( set "SYS_LANG=%%a" )
-if "!SYS_LANG:~0,2!"=="ru" (
-    set "TITLE_INSTALLER=--- Установщик Java Version Manager ---"
-    set "PROMPT_ADMIN=[ОШИБКА] Требуются права администратора."
-    set "PROMPT_WARN_MISSING=[ВНИМАНИЕ] Не найдены основные файлы скрипта."
-    set "PROMPT_CONFIRM_DOWNLOAD=Попробовать скачать полный пакет с GitHub? (Y/N): "
-    set "PROMPT_CANCEL=Установка отменена."
-    set "INFO_DOWNLOADING=Скачивание последней версии..."
-    set "INFO_UNPACKING=Распаковка..."
-    set "INFO_INSTALL_TO=Установка в:"
-    set "INFO_DIR_CREATED=Целевая директория создана."
-    set "INFO_COPYING=Копирование файлов..."
-    set "INFO_ALIASES=Создание алиасов (set-java, javas, jav)..."
-    set "INFO_PATH=Добавление в системный PATH..."
-    set "INFO_PATH_EXISTS=Путь уже добавлен в системный PATH. Пропускаем."
-    set "INFO_SUCCESS=--- Установка успешно завершена! ---"
-    set "INFO_RESTART=Перезапустите терминал, чтобы применить изменения."
-    set "INFO_OPENING=Открытие Java Version Manager в новом окне Терминала Windows..."
-    set "PROMPT_DOWNLOAD_FAIL=[ОШИБКА] Не удалось скачать файл."
-    set "PROMPT_STRUCTURE_FAIL=[ОШИБКА] Неверная структура архива."
-    set "INFO_DOWNLOAD_SUCCESS=Файлы успешно восстановлены."
-) else (
-    set "TITLE_INSTALLER=--- Java Version Manager Installer ---"
-    set "PROMPT_ADMIN=[ERROR] Administrator rights are required."
-    set "PROMPT_WARN_MISSING=[WARN] Core script files not found."
-    set "PROMPT_CONFIRM_DOWNLOAD=Attempt to download the full package from GitHub? (Y/N): "
-    set "PROMPT_CANCEL=Installation cancelled."
-    set "INFO_DOWNLOADING=Downloading the latest version..."
-    set "INFO_UNPACKING=Unpacking..."
-    set "INFO_INSTALL_TO=Installing to:"
-    set "INFO_DIR_CREATED=Target directory created."
-    set "INFO_COPYING=Copying files..."
-    set "INFO_ALIASES=Creating aliases (set-java, javas, jav)..."
-    set "INFO_PATH=Adding to system PATH..."
-    set "INFO_PATH_EXISTS=Path is already in system PATH. Skipping."
-    set "INFO_SUCCESS=--- Installation completed successfully! ---"
-    set "INFO_RESTART=Please restart your terminal for changes to take effect."
-    set "INFO_OPENING=Opening Java Version Manager in a new Windows Terminal window..."
-    set "PROMPT_DOWNLOAD_FAIL=[ERROR] Download failed."
-    set "PROMPT_STRUCTURE_FAIL=[ERROR] Invalid archive structure."
-    set "INFO_DOWNLOAD_SUCCESS=Files successfully recovered."
-)
+
+:: [FIX] Избегаем больших блоков if (...) с кириллицей внутри, так как это ломает парсер batch при chcp 65001
+if "!SYS_LANG:~0,2!"=="ru" goto :lang_ru
+
+:lang_en
+set "TITLE_INSTALLER=--- Java Version Manager Installer ---"
+set "PROMPT_ADMIN=[ERROR] Administrator rights are required."
+set "PROMPT_WARN_MISSING=[WARN] Core script files not found."
+set "PROMPT_CONFIRM_DOWNLOAD=Attempt to download the full package from GitHub? (Y/N): "
+set "PROMPT_CANCEL=Installation cancelled."
+set "INFO_DOWNLOADING=Downloading the latest version..."
+set "INFO_UNPACKING=Unpacking..."
+set "INFO_INSTALL_TO=Installing to:"
+set "INFO_DIR_CREATED=Target directory created."
+set "INFO_COPYING=Copying files..."
+set "INFO_ALIASES=Creating aliases (set-java, javas, jav)..."
+set "INFO_PATH=Adding to system PATH..."
+set "INFO_PATH_EXISTS=Path is already in system PATH. Skipping."
+set "INFO_SUCCESS=--- Installation completed successfully! ---"
+set "INFO_RESTART=Please restart your terminal for changes to take effect."
+set "INFO_OPENING=Opening Java Version Manager in a new Windows Terminal window..."
+set "PROMPT_DOWNLOAD_FAIL=[ERROR] Download failed."
+set "PROMPT_STRUCTURE_FAIL=[ERROR] Invalid archive structure."
+set "INFO_DOWNLOAD_SUCCESS=Files successfully recovered."
+goto :eof
+
+:lang_ru
+set "TITLE_INSTALLER=--- Установщик Java Version Manager ---"
+set "PROMPT_ADMIN=[ОШИБКА] Требуются права администратора."
+set "PROMPT_WARN_MISSING=[ВНИМАНИЕ] Не найдены основные файлы скрипта."
+set "PROMPT_CONFIRM_DOWNLOAD=Попробовать скачать полный пакет с GitHub? (Y/N): "
+set "PROMPT_CANCEL=Установка отменена."
+set "INFO_DOWNLOADING=Скачивание последней версии..."
+set "INFO_UNPACKING=Распаковка..."
+set "INFO_INSTALL_TO=Установка в:"
+set "INFO_DIR_CREATED=Целевая директория создана."
+set "INFO_COPYING=Копирование файлов..."
+set "INFO_ALIASES=Создание алиасов (set-java, javas, jav)..."
+set "INFO_PATH=Добавление в системный PATH..."
+set "INFO_PATH_EXISTS=Путь уже добавлен в системный PATH. Пропускаем."
+set "INFO_SUCCESS=--- Установка успешно завершена! ---"
+set "INFO_RESTART=Перезапустите терминал, чтобы применить изменения."
+set "INFO_OPENING=Открытие Java Version Manager в новом окне Терминала Windows..."
+set "PROMPT_DOWNLOAD_FAIL=[ОШИБКА] Не удалось скачать файл."
+set "PROMPT_STRUCTURE_FAIL=[ОШИБКА] Неверная структура архива."
+set "INFO_DOWNLOAD_SUCCESS=Файлы успешно восстановлены."
 goto :eof
 
 :recover_files
@@ -183,7 +197,6 @@ if %ERRORLEVEL% EQU 0 (
 
 if errorlevel 1 ( call :log_and_echo "!PROMPT_DOWNLOAD_FAIL!" & exit /b 1 )
 
-:: [FIX] Распаковка с использованием переменных окружения
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "Add-Type -AssemblyName System.IO.Compression.FileSystem; " ^
  "try { [System.IO.Compression.ZipFile]::ExtractToDirectory($env:PS_ZIP_PATH, $env:PS_EXTRACT_DIR); } catch { exit 1 }"

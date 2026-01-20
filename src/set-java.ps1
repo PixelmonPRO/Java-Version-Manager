@@ -649,9 +649,9 @@ function Invoke-InstallMenu {
         $includeFx = ($fxInput -eq 'y')
     }
     
-    # --- FIX: Prevent double colons in Read-Host prompt ---
     $promptText = $L.EnterMajorVersion.TrimEnd(':')
-    $javaVersion = Read-Host -Prompt "$promptText:"
+    # FIX: Используем $() для безопасной интерполяции переменной перед двоеточием
+    $javaVersion = Read-Host -Prompt "$($promptText):"
     
     if ([string]::IsNullOrWhiteSpace($javaVersion) -and ($provider.apiType -match '^(OracleDirectLink|Adoptium|Foojay|GitHubReleases)$')) {
         throw ($L.ApiRequiresVersion -f $Provider.name)
