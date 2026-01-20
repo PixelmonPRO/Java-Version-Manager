@@ -2,22 +2,24 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================================
-:: Установщик Java Version Manager (Fixed for Cyrillic Paths & Batch Parsing)
+:: Установщик Java Version Manager
+:: Fixes: Cyrillic paths, Parentheses in paths (e.g. "folder (1)"), Parsing errors
 :: ============================================================================
 
 :: --- Шаг 1: Настройка кодировки и лога ---
-:: Сразу ставим UTF-8. Важно для корректного отображения кириллицы.
 chcp 65001 >nul
 
-:: Определяем путь к логу. Используем кавычки.
+:: Используем кавычки при присвоении, чтобы спецсимволы в пути не ломали set
 set "LOG_FILE=%~dp0setup_log.txt"
 
 :: Логируем начало работы
+:: [FIX] Берем %~dp0 и %cd% в кавычки, чтобы скобки в пути (напр. "java-manager (1)")
+:: не ломали этот блок кода.
 (
     echo Starting log at %TIME% on %DATE%
     echo. & echo === SCRIPT STARTED ===
-    echo Script path: %~dp0
-    echo Current directory: %cd% & echo.
+    echo Script path: "%~dp0"
+    echo Current directory: "%cd%" & echo.
 ) > "!LOG_FILE!"
 
 :: --- Шаг 2: Локализация ---
@@ -35,7 +37,7 @@ if errorlevel 1 (
 
 :: --- Шаг 4: Проверка наличия файлов и восстановление ---
 set "SRC_DIR=%~dp0src\"
-:: Используем if exist с кавычками. Если папка src не найдена, пробуем восстановить.
+:: [FIX] Используем goto вместо блока (), чтобы парсер не искал закрывающую скобку в пути
 if exist "%SRC_DIR%set-java.ps1" goto :install_main
 
 call :recover_files
@@ -48,27 +50,24 @@ if errorlevel 1 (
 :install_main
 set "java_install_path="
 
-:: Передаем путь через переменную окружения (безопасно для кириллицы)
 set "PS_CONFIG_PATH=!SRC_DIR!config.json"
 
-:: Читаем конфиг через PowerShell
+:: Читаем конфиг. Вызов PowerShell безопасен, так как передаем пути через env.
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; (Get-Content -LiteralPath $env:PS_CONFIG_PATH -Raw -Encoding UTF8 | ConvertFrom-Json).javaInstallPath" 2^>nul`) do (
   set "java_install_path=%%i"
 )
 
-:: Дефолтный путь, если конфиг не прочитан
 if not defined java_install_path set "java_install_path=%ProgramFiles%\Java"
 set "scripts_target_dir=%java_install_path%\scripts"
 
 call :log_and_echo "!INFO_INSTALL_TO! -> !scripts_target_dir!"
+:: Создаем папку. Используем delayed expansion (!var!), оно не боится скобок.
 if not exist "!scripts_target_dir!" ( mkdir "!scripts_target_dir!" & call :log_and_echo "!INFO_DIR_CREATED!" )
 
 call :log_and_echo "!INFO_COPYING!"
-:: Копирование файлов
 xcopy "!SRC_DIR!*" "!scripts_target_dir!\" /E /I /Y /Q >nul
 
 call :log_and_echo "!INFO_ALIASES!"
-:: Создание батника-обертки
 (
   echo @echo off
   echo chcp 65001 ^>nul
@@ -80,7 +79,6 @@ copy /y "!scripts_target_dir!\set-java.bat" "!scripts_target_dir!\jav.bat" >nul
 
 call :log_and_echo "!INFO_PATH!"
 
-:: Обновление PATH через PowerShell
 set "PS_TARGET_DIR=!scripts_target_dir!"
 powershell -NoProfile -Command ^
  "$t=$env:PS_TARGET_DIR; $regKey='HKLM:\System\CurrentControlSet\Control\Session Manager\Environment'; $p=(Get-ItemProperty -Path $regKey).Path; if($p -notlike '*'+$t+'*'){Set-ItemProperty -Path $regKey -Name Path -Value ($p+';'+$t); Write-Host 'Path updated.'} else{Write-Host '!INFO_PATH_EXISTS!'}" >> "!LOG_FILE!"
@@ -111,7 +109,7 @@ goto :eof
 set "SYS_LANG=en"
 for /f "tokens=3" %%a in ('reg query "HKCU\Control Panel\International" /v LocaleName 2^>nul') do ( set "SYS_LANG=%%a" )
 
-:: [FIX] Избегаем больших блоков if (...) с кириллицей внутри, так как это ломает парсер batch при chcp 65001
+:: Линейная логика локализации (без вложенных блоков)
 if "!SYS_LANG:~0,2!"=="ru" goto :lang_ru
 
 :lang_en
@@ -172,7 +170,6 @@ md "%TEMP_DIR%" & md "%EXTRACT_DIR%"
 
 call :log_and_echo "!INFO_DOWNLOADING! & !INFO_UNPACKING!"...
 
-:: [FIX] Используем переменные окружения для путей восстановления
 set "PS_ZIP_PATH=!ZIP_PATH!"
 set "PS_EXTRACT_DIR=!EXTRACT_DIR!"
 set "PS_LOG_FILE=!LOG_FILE!"
