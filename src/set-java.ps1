@@ -18,6 +18,10 @@
   .\set-java.ps1 --clean-ide --force
 #>
 
+# Принудительная установка кодировки консоли на UTF-8 для корректной работы с кириллицей
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+
 # --- Параметры командной строки ---
 param(
     [string]$List,
@@ -65,7 +69,7 @@ function Initialize-Configuration {
         } catch { throw "Failed to create config.json at '$configPath'. Check permissions." }
     }
     try {
-        $script:config = Get-Content -Path $configPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $script:config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
     } catch { throw "Failed to read or parse config.json. Please ensure it is a valid JSON file." }
 
     $script:javaInstallPath = [System.Environment]::ExpandEnvironmentVariables($config.javaInstallPath)
@@ -80,7 +84,7 @@ function Initialize-Configuration {
     }
     
     try {
-        $script:L = Get-Content -Path $langFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $script:L = Get-Content -LiteralPath $langFilePath -Raw -Encoding UTF8 | ConvertFrom-Json
     } catch { throw "Failed to parse language file '$langFilePath'." }
 }
 
@@ -846,7 +850,7 @@ function Find-AvailableUpdates {
 
         if (Test-Path $metaPath) {
             # НОВАЯ ЛОГИКА: Читаем метаданные
-            $meta = Get-Content -Path $metaPath -Raw | ConvertFrom-Json
+            $meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json
             $provider = $config.providers | Where-Object { $_.name -eq $meta.providerName }
             $majorVersion = $meta.majorVersion
             $packageType = $meta.packageType
@@ -897,7 +901,7 @@ function Perform-Update {
     $oldMetaPath = Join-Path $OldJdk.Path ".jvm_meta.json"
     $pkgTypeForNew = 'jdk' # По умолчанию
     if (Test-Path $oldMetaPath) {
-        $oldMeta = Get-Content $oldMetaPath -Raw | ConvertFrom-Json
+        $oldMeta = Get-Content -LiteralPath $oldMetaPath -Raw | ConvertFrom-Json
         $pkgTypeForNew = $oldMeta.packageType
     } else {
         # Легаси-проверка для старых установок
@@ -1036,7 +1040,7 @@ function Invoke-IdeCleanup {
         Write-Host ($L.CleanIdeConfigFileFound -f $file)
         
         try {
-            [xml]$xml = Get-Content -Path $file -Raw -Encoding UTF8
+            [xml]$xml = Get-Content -LiteralPath $file -Raw -Encoding UTF8
         } catch {
             Write-Warning "Не удалось прочитать XML-файл '$file'. Пропуск. Ошибка: $($_.Exception.Message)"
             continue

@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================================
-:: Установщик Java Version Manager (v1.5 - Усиленная сетевая логика)
+:: Установщик Java Version Manager (Fixed for Cyrillic Paths)
 :: ============================================================================
 
 :: --- Шаг 1: Настройка и очистка лога ---
@@ -43,9 +43,14 @@ if errorlevel 1 (
 :: --- Шаг 5: Основная логика установки ---
 :install_main
 set "java_install_path="
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Content -Path '!SRC_DIR!config.json' -Raw | ConvertFrom-Json).javaInstallPath" 2^>nul`) do (
+
+:: [FIX] Передаем путь через переменную окружения, чтобы избежать проблем с кириллицей в аргументах
+set "PS_CONFIG_PATH=!SRC_DIR!config.json"
+
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; (Get-Content -LiteralPath $env:PS_CONFIG_PATH -Raw -Encoding UTF8 | ConvertFrom-Json).javaInstallPath" 2^>nul`) do (
   set "java_install_path=%%i"
 )
+
 if not defined java_install_path set "java_install_path=%ProgramFiles%\Java"
 set "scripts_target_dir=%java_install_path%\scripts"
 
@@ -53,6 +58,7 @@ call :log_and_echo "!INFO_INSTALL_TO! -> !scripts_target_dir!"
 if not exist "!scripts_target_dir!" ( mkdir "!scripts_target_dir!" & call :log_and_echo "!INFO_DIR_CREATED!" )
 
 call :log_and_echo "!INFO_COPYING!"
+:: Использование xcopy с кавычками обычно безопасно для кириллицы
 xcopy "!SRC_DIR!*" "!scripts_target_dir!\" /E /I /Y /Q >nul
 
 call :log_and_echo "!INFO_ALIASES!"
@@ -60,13 +66,15 @@ call :log_and_echo "!INFO_ALIASES!"
   echo @echo off
   echo chcp 65001 ^>nul
   echo powershell -NoProfile -ExecutionPolicy Bypass -File "%scripts_target_dir%\set-java.ps1" %%*
-) > "%scripts_target_dir%\set-java.bat"
-copy /y "%scripts_target_dir%\set-java.bat" "%scripts_target_dir%\javas.bat" >nul
-copy /y "%scripts_target_dir%\set-java.bat" "%scripts_target_dir%\jav.bat" >nul
+) > "!scripts_target_dir!\set-java.bat"
+copy /y "!scripts_target_dir!\set-java.bat" "!scripts_target_dir!\javas.bat" >nul
+copy /y "!scripts_target_dir!\set-java.bat" "!scripts_target_dir!\jav.bat" >nul
 
 call :log_and_echo "!INFO_PATH!"
+:: [FIX] Передача целевого пути через переменную окружения
+set "PS_TARGET_DIR=!scripts_target_dir!"
 powershell -NoProfile -Command ^
- "$regKey='HKLM:\System\CurrentControlSet\Control\Session Manager\Environment'; $p=(Get-ItemProperty -Path $regKey).Path; $t='%scripts_target_dir%'; if($p -notlike '*'+$t+'*'){Set-ItemProperty -Path $regKey -Name Path -Value ($p+';'+$t); Write-Host 'Path updated.'} else{Write-Host '!INFO_PATH_EXISTS!'}" >> "!LOG_FILE!"
+ "$t=$env:PS_TARGET_DIR; $regKey='HKLM:\System\CurrentControlSet\Control\Session Manager\Environment'; $p=(Get-ItemProperty -Path $regKey).Path; if($p -notlike '*'+$t+'*'){Set-ItemProperty -Path $regKey -Name Path -Value ($p+';'+$t); Write-Host 'Path updated.'} else{Write-Host '!INFO_PATH_EXISTS!'}" >> "!LOG_FILE!"
 
 echo. & call :log_and_echo "!INFO_SUCCESS!" & call :log_and_echo "!INFO_RESTART!" & echo.
 pause
@@ -74,7 +82,7 @@ pause
 :: --- Шаг 6: Открытие нового терминала с запущенным set-java ---
 where wt.exe >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    start wt.exe powershell.exe -NoExit -Command "& '%scripts_target_dir%\set-java.bat'"
+    start wt.exe powershell.exe -NoExit -Command "& '!scripts_target_dir!\set-java.bat'"
 ) else (
     start cmd.exe /k "!scripts_target_dir!\set-java.bat"
 )
@@ -110,6 +118,9 @@ if "!SYS_LANG:~0,2!"=="ru" (
     set "INFO_SUCCESS=--- Установка успешно завершена! ---"
     set "INFO_RESTART=Перезапустите терминал, чтобы применить изменения."
     set "INFO_OPENING=Открытие Java Version Manager в новом окне Терминала Windows..."
+    set "PROMPT_DOWNLOAD_FAIL=[ОШИБКА] Не удалось скачать файл."
+    set "PROMPT_STRUCTURE_FAIL=[ОШИБКА] Неверная структура архива."
+    set "INFO_DOWNLOAD_SUCCESS=Файлы успешно восстановлены."
 ) else (
     set "TITLE_INSTALLER=--- Java Version Manager Installer ---"
     set "PROMPT_ADMIN=[ERROR] Administrator rights are required."
@@ -127,6 +138,9 @@ if "!SYS_LANG:~0,2!"=="ru" (
     set "INFO_SUCCESS=--- Installation completed successfully! ---"
     set "INFO_RESTART=Please restart your terminal for changes to take effect."
     set "INFO_OPENING=Opening Java Version Manager in a new Windows Terminal window..."
+    set "PROMPT_DOWNLOAD_FAIL=[ERROR] Download failed."
+    set "PROMPT_STRUCTURE_FAIL=[ERROR] Invalid archive structure."
+    set "INFO_DOWNLOAD_SUCCESS=Files successfully recovered."
 )
 goto :eof
 
@@ -144,52 +158,47 @@ md "%TEMP_DIR%" & md "%EXTRACT_DIR%"
 
 call :log_and_echo "!INFO_DOWNLOADING! & !INFO_UNPACKING!"...
 
-:: Проверка наличия curl
+:: [FIX] Используем переменные окружения для путей восстановления
+set "PS_ZIP_PATH=!ZIP_PATH!"
+set "PS_EXTRACT_DIR=!EXTRACT_DIR!"
+set "PS_LOG_FILE=!LOG_FILE!"
+
 where curl >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    :: Используем curl для скачивания
-    curl -L --ssl-no-revoke -o "%ZIP_PATH%" "https://github.com/PixelmonPRO/Java-Version-Manager/releases/latest/download/java-manager.zip"
+    curl -L --ssl-no-revoke -o "!ZIP_PATH!" "https://github.com/PixelmonPRO/Java-Version-Manager/releases/latest/download/java-manager.zip"
     if errorlevel 1 (
-        call :log_and_echo "[ERROR] curl failed to download file."
+        call :log_and_echo "!PROMPT_DOWNLOAD_FAIL!"
         exit /b 1
     )
 ) else (
-    :: fallback к PowerShell (с TLS 1.2 и User-Agent)
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-     "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls; " ^
+     "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
      "try { " ^
-     " Invoke-WebRequest -Uri 'https://github.com/PixelmonPRO/Java-Version-Manager/releases/latest/download/java-manager.zip' -OutFile '%ZIP_PATH%' -UseBasicParsing -Headers @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT; Windows NT 10.0; en-US)' } -ErrorAction Stop; " ^
-     " Add-Type -AssemblyName System.IO.Compression.FileSystem; " ^
-     " [System.IO.Compression.ZipFile]::ExtractToDirectory('%ZIP_PATH%', '%EXTRACT_DIR%'); " ^
+     " Invoke-WebRequest -Uri 'https://github.com/PixelmonPRO/Java-Version-Manager/releases/latest/download/java-manager.zip' -OutFile $env:PS_ZIP_PATH -UseBasicParsing -Headers @{ 'User-Agent' = 'Java-Manager-Installer' } -ErrorAction Stop; " ^
      "} catch { " ^
-     " $logPath = '%LOG_FILE%'; " ^
-     " '--- POWERSHELL ERROR ---' | Out-File -FilePath $logPath -Append -Encoding utf8; " ^
-     " $_.Exception.ToString() | Out-File -FilePath $logPath -Append -Encoding utf8; " ^
-     " if ($_.Exception.InnerException) { " ^
-     "  '--- INNER EXCEPTION ---' | Out-File -FilePath $logPath -Append -Encoding utf8; " ^
-     "  $_.Exception.InnerException.ToString() | Out-File -FilePath $logPath -Append -Encoding utf8; " ^
-     " } " ^
+     " $_.Exception.ToString() | Out-File -FilePath $env:PS_LOG_FILE -Append -Encoding utf8; " ^
      " exit 1; " ^
      "}"
 )
 
 if errorlevel 1 ( call :log_and_echo "!PROMPT_DOWNLOAD_FAIL!" & exit /b 1 )
 
-:: Распаковка zip файла
+:: [FIX] Распаковка с использованием переменных окружения
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "Add-Type -AssemblyName System.IO.Compression.FileSystem; " ^
- "try { [System.IO.Compression.ZipFile]::ExtractToDirectory('%ZIP_PATH%', '%EXTRACT_DIR%');  } catch { exit 1 }"
+ "try { [System.IO.Compression.ZipFile]::ExtractToDirectory($env:PS_ZIP_PATH, $env:PS_EXTRACT_DIR); } catch { exit 1 }"
+
 if errorlevel 1 (
     call :log_and_echo "[ERROR] Failed to extract downloaded archive."
     exit /b 1
 )
 
-if not exist "%EXTRACT_DIR%\src\config.json" (
+if not exist "!EXTRACT_DIR!\src\config.json" (
     call :log_and_echo "!PROMPT_STRUCTURE_FAIL!"
     exit /b 1
 )
 
-set "SRC_DIR=%EXTRACT_DIR%\src\"
+set "SRC_DIR=!EXTRACT_DIR!\src\"
 call :log_and_echo "!INFO_DOWNLOAD_SUCCESS!"
 
 exit /b
